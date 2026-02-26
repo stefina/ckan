@@ -56,6 +56,18 @@ def create_from_model():
         click.secho('Create DB from model: SUCCESS', fg='green', bold=True)
 
 
+@db.command()
+def create_from_model():
+    """Initialize database from the model instead of migrations.
+    """
+    try:
+        model.repo.create_db()
+    except Exception as e:
+        error_shout(e)
+    else:
+        click.secho('Create DB from model: SUCCESS', fg='green', bold=True)
+
+
 PROMPT_MSG = u'This will delete all of your data!\nDo you want to continue?'
 
 
