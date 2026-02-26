@@ -720,6 +720,10 @@ def activity_delete(context: Context, data_dict: DataDict) -> dict[str, Any]:
         )
 
     if query.count():
+        activity_ids_subq = query.with_entities(model_activity.Activity.id)
+        session.query(model_activity.ActivityDetail).filter(
+            model_activity.ActivityDetail.activity_id.in_(activity_ids_subq)
+        ).delete(synchronize_session=False)
         deleted_count = query.delete(synchronize_session=False)
 
         if not context.get("defer_commit", False):
