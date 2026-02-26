@@ -2,8 +2,9 @@
 from __future__ import annotations
 import logging
 
+import sqlalchemy as sa
 from datetime import datetime
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, Tuple, List
 
 from flask import Blueprint
 
@@ -16,11 +17,14 @@ from ckan.views.group import (
 )
 from ckan.views.dataset import _get_pkg_template
 
+from ckan.common import request as ckan_request
+
 # TODO: don't use hidden funcitons
 from ckan.views.user import _extra_template_variables
 
 # TODO: don't use hidden funcitons
 from ckan.views.dataset import _setup_template_variables
+from ckan.views.admin import TrashView
 
 from ckan.types import Context, Response
 from .model import Activity
@@ -358,21 +362,32 @@ def package_activity(id: str) -> Union[Response, str]:  # noqa
         activity_type=activity_type
     )
 
-    return tk.render(
-        "package/activity_stream.html",
-        {
-            "dataset_type": dataset_type,
-            "pkg_dict": pkg_dict,
-            "activity_stream": activity_stream,
-            "id": id,  # i.e. package's current name
-            "limit": limit,
-            "has_more": has_more,
-            "activity_type": activity_type,
-            "activity_types": VALIDATORS_PACKAGE_ACTIVITY_TYPES.keys(),
-            "newer_activities_url": newer_activities_url,
-            "older_activities_url": older_activities_url,
-        },
-    )
+    object_type = "package"
+    blueprint = "activity.{}_activity".format(object_type)
+
+    extra_vars = {
+        "dataset_type": dataset_type,
+        "pkg_dict": pkg_dict,
+        "activity_stream": activity_stream,
+        "id": id,  # i.e. package's current name
+        "limit": limit,
+        "has_more": has_more,
+        "activity_type": activity_type,
+        "activity_types": VALIDATORS_PACKAGE_ACTIVITY_TYPES.keys(),
+        "newer_activities_url": newer_activities_url,
+        "older_activities_url": older_activities_url,
+        "blueprint": blueprint,
+        "object_type": object_type,
+    }
+
+    if ckan_request.htmx:
+        return tk.render(
+            "snippets/activity_stream.html", extra_vars
+        )
+    else:
+        return tk.render(
+            "package/activity_stream.html", extra_vars
+        )
 
 
 @bp.route("/dataset/changes/<id>")
@@ -575,6 +590,8 @@ def group_activity(id: str, group_type: str, is_organization: bool) -> str:
         activity_type=activity_type
     )
 
+    blueprint = "activity.{}_activity".format(group_type)
+
     extra_vars = {
         "id": id,
         "activity_stream": activity_stream,
@@ -583,12 +600,19 @@ def group_activity(id: str, group_type: str, is_organization: bool) -> str:
         "activity_type": activity_type,
         "activity_types": filter_types.keys(),
         "newer_activities_url": newer_activities_url,
-        "older_activities_url": older_activities_url
+        "older_activities_url": older_activities_url,
+        "blueprint": blueprint,
+        "object_type": group_type,
     }
 
-    return tk.render(
-        _get_group_template("activity_template", group_type), extra_vars
-    )
+    if ckan_request.htmx:
+        return tk.render(
+            "snippets/activity_stream.html", extra_vars
+        )
+    else:
+        return tk.render(
+            _get_group_template("activity_template", group_type), extra_vars
+        )
 
 
 @bp.route(
@@ -950,3 +974,74 @@ def _get_dashboard_context(
         "selected_id": False,
         "dict": None,
     }
+
+
+class ActivityTrashView(TrashView):
+    def __init__(self):
+        super(ActivityTrashView, self).__init__()
+        self.deleted_activities = self._get_deleted_activities()
+
+        # Include activities in the deleted_entities dictionary
+        self.deleted_entities["activity"] = self.deleted_activities
+
+        # Add messages for activities
+        self.messages["confirm"]["activity"] = tk._(
+            "Are you sure you want to purge activities?"
+        )
+        self.messages["success"]["activity"] = tk._(
+            "{} activities have been purged"
+        )
+        self.messages["empty"]["activity"] = tk._(
+            "There are no activities to purge"
+        )
+
+    # TODO
+    def _get_deleted_activities(self) -> list[Any]:
+        activities = model.Session.query(Activity).order_by(Activity.activity_type, sa.desc(Activity.timestamp)).all()
+
+        grouped_activities = {}
+        for activity in activities:
+            # Extract the date part from the timestamp
+            date_str = activity.timestamp.strftime('%Y-%m-%d')
+
+            # Initialize the list if the date is not already in the dict
+            if date_str not in grouped_activities:
+                grouped_activities[date_str] = []
+
+            # Append the activity to the list for this date
+            grouped_activities[date_str].append(activity)
+
+        return grouped_activities
+
+    def post(self) -> Response:
+        if "cancel" in tk.request.form:
+            return tk.h.redirect_to("admin.trash")
+
+        req_action = tk.form.get("action", "")
+        if req_action == "activity":
+            return self.purge_entity()
+        else:
+            # Call the parent class's post method for other actions
+            return super(ActivityTrashView, self).post()
+
+    def _get_actions_and_entities(
+        self,
+    ) -> Tuple[Tuple[str, ...], Tuple[List[Any], ...]]:
+        actions, entities = super(
+            ActivityTrashView, self
+        )._get_actions_and_entities()
+
+        actions += ("activity_purge",)
+        entities += (self.deleted_activities,)
+        return actions, entities
+
+    @staticmethod
+    def _get_purge_action(ent_type: str) -> str:
+        if ent_type == "activity":
+            return "activity_purge"
+        return TrashView._get_purge_action(ent_type)
+
+
+bp.add_url_rule(
+    "/ckan-admin/trash", view_func=ActivityTrashView.as_view(str("trash"))
+)
