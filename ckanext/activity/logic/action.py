@@ -8,7 +8,7 @@ import json
 from typing import Any, Optional
 
 import ckan.plugins.toolkit as tk
-from ckan import authz
+from ckan import authz, model
 from ckan.logic import validate
 from ckan.types import Context, DataDict, ActionResult
 import ckanext.activity.email_notifications as email_notifications
@@ -64,7 +64,6 @@ def dashboard_mark_activities_old(
 
     """
     tk.check_access("dashboard_mark_activities_old", context, data_dict)
-    model = context["model"]
     user_obj = model.User.get(context["user"])
     assert user_obj
     user_id = user_obj.id
@@ -104,8 +103,6 @@ def activity_create(
     if not tk.config.get("ckan.activity_streams_enabled"):
         return
 
-    model = context["model"]
-
     # Any revision_id that the caller attempts to pass in the activity_dict is
     # ignored and removed here.
     if "revision_id" in data_dict:
@@ -122,7 +119,7 @@ def activity_create(
     if not context.get("defer_commit"):
         model.repo.commit()
 
-    log.debug("Created '%s' activity" % activity.activity_type)
+    log.debug("Created '%s' activity", activity.activity_type)
     return model_activity.activity_dictize(activity, context)
 
 
@@ -159,8 +156,6 @@ def user_activity_list(
     # FIXME: Filter out activities whose subject or object the user is not
     # authorized to read.
     tk.check_access("user_activity_list", context, data_dict)
-
-    model = context["model"]
 
     user_ref = data_dict.get("id")  # May be user name or id.
     user = model.User.get(user_ref)
@@ -243,8 +238,6 @@ def package_activity_list(
         )
 
     tk.check_access("package_activity_list", context, data_dict)
-
-    model = context["model"]
 
     package_ref = data_dict.get("id")  # May be name or ID.
     package = model.Package.get(package_ref)
@@ -461,7 +454,6 @@ def dashboard_activity_list(
     """
     tk.check_access("dashboard_activity_list", context, data_dict)
 
-    model = context["model"]
     user_obj = model.User.get(context["user"])
     assert user_obj
     user_id = user_obj.id
@@ -533,10 +525,9 @@ def activity_show(context: Context, data_dict: DataDict) -> dict[str, Any]:
 
     :rtype: dictionary
     """
-    model = context["model"]
     activity_id = tk.get_or_bust(data_dict, "id")
 
-    activity = model.Session.query(model_activity.Activity).get(activity_id)
+    activity = model.Session.get(model_activity.Activity, activity_id)
     if activity is None:
         raise tk.ObjectNotFound()
     context["activity"] = activity
@@ -564,11 +555,10 @@ def activity_data_show(
 
     :rtype: dictionary
     """
-    model = context["model"]
     activity_id = tk.get_or_bust(data_dict, "id")
     object_type = data_dict.get("object_type")
 
-    activity = model.Session.query(model_activity.Activity).get(activity_id)
+    activity = model.Session.get(model_activity.Activity, activity_id)
     if activity is None:
         raise tk.ObjectNotFound()
     context["activity"] = activity
@@ -604,14 +594,13 @@ def activity_diff(context: Context, data_dict: DataDict) -> dict[str, Any]:
     """
     import difflib
 
-    model = context["model"]
     activity_id = tk.get_or_bust(data_dict, "id")
     object_type = tk.get_or_bust(data_dict, "object_type")
     diff_type = data_dict.get("diff_type", "unified")
 
     tk.check_access("activity_diff", context, data_dict)
 
-    activity = model.Session.query(model_activity.Activity).get(activity_id)
+    activity = model.Session.get(model_activity.Activity, activity_id)
     if activity is None:
         raise tk.ObjectNotFound()
     prev_activity = (
@@ -620,7 +609,7 @@ def activity_diff(context: Context, data_dict: DataDict) -> dict[str, Any]:
         .filter(model_activity.Activity.timestamp < activity.timestamp)
         .order_by(
             # type_ignore_reason: incomplete SQLAlchemy types
-            model_activity.Activity.timestamp.desc()  # type: ignore
+            model_activity.Activity.timestamp.desc()
         )
         .first()
     )
@@ -694,6 +683,22 @@ def activity_delete(context: Context, data_dict: DataDict) -> dict[str, Any]:
     tk.check_access("activity_delete", context, data_dict)
 
     session = context["session"]
+    activity_id = data_dict.get("id")
+
+    if activity_id:
+        activity = model_activity.Activity.get(activity_id)
+        if activity is None:
+            raise tk.ObjectNotFound(tk._("Activity not found"))
+        detail_table = model_activity.ActivityDetail.__table__
+        session.query(model_activity.ActivityDetail).filter(
+            detail_table.c.activity_id == activity_id
+        ).delete(synchronize_session=False)
+        session.query(model_activity.Activity).filter(
+            model_activity.Activity.id == activity_id
+        ).delete(synchronize_session=False)
+        if not context.get("defer_commit", False):
+            session.commit()
+        return {"message": tk._("Activity purged")}
 
     start_date = data_dict.get("start_date")
     end_date = data_dict.get("end_date")
