@@ -7,6 +7,7 @@ from typing import Any, Optional, Union
 
 from flask import Blueprint
 
+import ckan.lib.base as base
 import ckan.plugins.toolkit as tk
 import ckan.model as model
 from ckan.logic import NotFound
@@ -1032,3 +1033,15 @@ bp.add_url_rule(
     methods=["GET", "POST"],
     endpoint="admin_activities",
 )
+
+@bp.route("/testing/dashboard")
+def dashboard_testing() -> str:
+    return tk.render(
+        'user/snippets/followee_dropdown.html', {
+            'context': {},
+            'followees': [
+                {"dict": {"id": 1}, "display_name": "Test followee"},
+                {"dict": {"id": 2}, "display_name": "Not valid"}
+            ]
+        }
+    )
