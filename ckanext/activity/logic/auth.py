@@ -211,3 +211,8 @@ def recently_changed_packages_activity_list(
 def activity_delete(context: Context, data_dict: DataDict) -> AuthResult:
     """Only sysadmins are authorized to delete activities."""
     return {"success": False}
+
+
+def activity_delete_counts(context: Context, data_dict: DataDict) -> AuthResult:
+    """Only sysadmins are authorized to read activity delete counts."""
+    return {"success": False}
